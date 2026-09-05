@@ -118,11 +118,30 @@
   </div>
 
   <div class="card">
+    <div class="chart-title">Fetch live data</div>
+    <div class="chart-note">Pulls VIX, S&P 500 (+ 50/200DMA), WTI oil, 10Y yield, and HY/BBB spreads automatically. Needs two free API keys, saved once in your browser.</div>
+    <div class="log-row">
+      <label style="flex:1; min-width:220px;">Twelve Data API key <a href="https://twelvedata.com/pricing" target="_blank" style="color:var(--accent);">(get free key)</a>
+        <input id="apiKeyTD" type="text" placeholder="4ff99858b3bb46e594ed544372d1bf71">
+      </label>
+      <label style="flex:1; min-width:220px;">FRED API key <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank" style="color:var(--accent);">(get free key)</a>
+        <input id="apiKeyFRED" type="text" placeholder="8c5868a704bc729ac905ae8172b3e331">
+      </label>
+      <button id="saveKeysBtn" class="secondary">Save keys</button>
+    </div>
+    <div class="log-row" style="margin-top:10px;">
+      <button id="fetchLiveBtn">Fetch live data now</button>
+    </div>
+    <div class="status-msg" id="fetchMsg"></div>
+  </div>
+
+  <div class="card">
     <div class="chart-title">Log a new "cd" check</div>
     <div class="chart-note">Paste the line Claude gives you after a "cd" run, then hit Log — fills and saves all 8 fields in one click.</div>
     <div class="log-row" style="align-items:flex-end;">
       <label style="flex:1; min-width:260px;">Quick paste (VIX, VIX chg%, HY bp, BBB bp, 10Y%, 50DMA%, 200DMA%, WTI)
         <input id="quickPaste" type="text" placeholder="15.32, 2.7, 263, 98, 4.76, 0.9, 6.9, 87.72" style="width:100%;">
+        <div id="quickPasteLive" style="font-size:11px; color:var(--sub); margin-top:4px;">(box is empty)</div>
       </label>
       <button id="quickLogBtn">Log</button>
     </div>
@@ -141,7 +160,7 @@
     <div class="status-msg" id="statusMsg"></div>
   </div>
 
-  <div style="text-align:center; color:var(--sub); font-size:11px; margin-top:8px;">Dashboard build v1.1</div>
+  <div style="text-align:center; color:var(--sub); font-size:11px; margin-top:8px;">Dashboard build v2.0</div>
 </div>
 
 <script>
@@ -350,6 +369,109 @@ function renderAll(){
   drawCharts();
 }
 
+// --- Live data fetching ---
+async function getApiKeys(){
+  let td = "", fred = "";
+  try{
+    if(window.storage){
+      const r = await window.storage.get("api-keys");
+      if(r && r.value){ const k = JSON.parse(r.value); td = k.td || ""; fred = k.fred || ""; }
+    }
+  }catch(e){ /* no keys saved yet */ }
+  return {td, fred};
+}
+
+async function saveApiKeys(td, fred){
+  try{
+    if(window.storage) await window.storage.set("api-keys", JSON.stringify({td, fred}));
+  }catch(e){ /* storage unavailable */ }
+}
+
+async function fetchTwelveDataQuote(symbol, apiKey){
+  const url = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(symbol)}&apikey=${apiKey}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if(data.status === "error" || data.code){
+    throw new Error(`Twelve Data error for ${symbol}: ${data.message || "unknown error"}`);
+  }
+  return data; // has .close, .percent_change, .previous_close, etc.
+}
+
+async function fetchTwelveDataSMA(symbol, period, apiKey){
+  const url = `https://api.twelvedata.com/sma?symbol=${encodeURIComponent(symbol)}&interval=1day&time_period=${period}&apikey=${apiKey}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if(data.status === "error" || data.code){
+    throw new Error(`Twelve Data SMA${period} error: ${data.message || "unknown error"}`);
+  }
+  const vals = data.values;
+  if(!vals || !vals.length) throw new Error(`No SMA${period} data returned`);
+  return parseFloat(vals[0].sma);
+}
+
+async function fetchFredLatest(seriesId, apiKey){
+  const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${apiKey}&file_type=json&sort_order=desc&limit=5`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if(data.error_code){
+    throw new Error(`FRED error for ${seriesId}: ${data.error_message || "unknown error"}`);
+  }
+  const obs = (data.observations || []).find(o => o.value !== ".");
+  if(!obs) throw new Error(`No recent data for ${seriesId}`);
+  return {value: parseFloat(obs.value), date: obs.date};
+}
+
+async function fetchLiveData(){
+  const msg = document.getElementById("fetchMsg");
+  const {td, fred} = await getApiKeys();
+  if(!td || !fred){
+    msg.textContent = "Add both API keys above and click Save keys first.";
+    msg.style.color = "var(--amber)";
+    return;
+  }
+  msg.textContent = "Fetching…";
+  msg.style.color = "var(--sub)";
+  try{
+    const [vixQ, spxQ, wtiQ, sma50, sma200, dgs10, hyOas, bbbOas] = await Promise.all([
+      fetchTwelveDataQuote("VIX", td),
+      fetchTwelveDataQuote("SPX", td),
+      fetchTwelveDataQuote("WTI/USD", td),
+      fetchTwelveDataSMA("SPX", 50, td),
+      fetchTwelveDataSMA("SPX", 200, td),
+      fetchFredLatest("DGS10", fred),
+      fetchFredLatest("BAMLH0A0HYM2", fred),
+      fetchFredLatest("BAMLC0A4CBBB", fred),
+    ]);
+
+    const vix = parseFloat(vixQ.close);
+    const vixChg = parseFloat(vixQ.percent_change);
+    const spx = parseFloat(spxQ.close);
+    const wti = parseFloat(wtiQ.close);
+    const d50 = ((spx - sma50) / sma50) * 100;
+    const d200 = ((spx - sma200) / sma200) * 100;
+    const y10 = dgs10.value;
+    const hy = hyOas.value * 100; // FRED reports as percent, convert to bp
+    const bbb = bbbOas.value * 100;
+
+    document.getElementById("inVix").value = vix.toFixed(2);
+    document.getElementById("inVixChg").value = vixChg.toFixed(2);
+    document.getElementById("inHy").value = hy.toFixed(0);
+    document.getElementById("inBbb").value = bbb.toFixed(0);
+    document.getElementById("in10y").value = y10.toFixed(2);
+    document.getElementById("in50").value = d50.toFixed(2);
+    document.getElementById("in200").value = d200.toFixed(2);
+    document.getElementById("inWti").value = wti.toFixed(2);
+
+    await logCheck({vix, vixChg, hy, bbb, y10, d50, d200, wti});
+    msg.textContent = `Live data fetched and logged (HY/BBB OAS dated ${hyOas.date} — FRED's most recent print).`;
+    msg.style.color = "var(--green)";
+  }catch(err){
+    console.error(err);
+    msg.textContent = "Fetch failed: " + err.message;
+    msg.style.color = "var(--red)";
+  }
+}
+
 async function logCheck(v){
   const msg = document.getElementById("statusMsg");
   if(Object.values(v).some(x => typeof x !== "number" || isNaN(x))){
@@ -375,6 +497,24 @@ async function logCheck(v){
 async function init(){
   await loadState();
 
+  // Preload saved API keys into the fields, if any
+  try{
+    const {td, fred} = await getApiKeys();
+    if(td) document.getElementById("apiKeyTD").value = td;
+    if(fred) document.getElementById("apiKeyFRED").value = fred;
+  }catch(e){ /* ignore */ }
+
+  document.getElementById("saveKeysBtn").addEventListener("click", async ()=>{
+    const td = document.getElementById("apiKeyTD").value.trim();
+    const fred = document.getElementById("apiKeyFRED").value.trim();
+    await saveApiKeys(td, fred);
+    const msg = document.getElementById("fetchMsg");
+    msg.textContent = "Keys saved to this browser.";
+    msg.style.color = "var(--green)";
+  });
+
+  document.getElementById("fetchLiveBtn").addEventListener("click", fetchLiveData);
+
   // Attach ALL button listeners FIRST, before touching charts —
   // so a Chart.js/network failure can never prevent logging from working.
   document.getElementById("logBtn").addEventListener("click", async ()=>{
@@ -389,6 +529,37 @@ async function init(){
       wti: parseFloat(document.getElementById("inWti").value),
     };
     await logCheck(v);
+  });
+
+  document.getElementById("quickPaste").addEventListener("input", (e)=>{
+    const live = document.getElementById("quickPasteLive");
+    const val = e.target.value;
+    if(!val){
+      live.textContent = "(box is empty)";
+      live.style.color = "var(--sub)";
+      return;
+    }
+    const count = (val.match(/-?\d+(\.\d+)?/g) || []).length;
+    live.textContent = `${val.length} character(s) in box, ${count} number(s) detected`;
+    live.style.color = count >= 8 ? "var(--green)" : "var(--sub)";
+  });
+
+  document.getElementById("quickPaste").addEventListener("paste", (e)=>{
+    // Some browser/OS/extension setups swallow the default paste into inputs.
+    // Manually pull the clipboard text and insert it ourselves as a fallback.
+    const el = e.target;
+    let text = "";
+    if(e.clipboardData && e.clipboardData.getData){
+      text = e.clipboardData.getData("text");
+    }
+    if(text){
+      e.preventDefault();
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      const newPos = start + text.length;
+      el.setSelectionRange(newPos, newPos);
+    }
   });
 
   document.getElementById("quickLogBtn").addEventListener("click", async ()=>{
