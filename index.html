@@ -253,17 +253,22 @@ function currentWindow(){
 }
 
 function drawCharts(){
-  const {labels, vix, score, exactIdxInWindow} = currentWindow();
-  const vixSplit = splitSolidDashed(vix, exactIdxInWindow);
-  const scoreSplit = splitSolidDashed(score, exactIdxInWindow);
+  if(typeof Chart === "undefined"){
+    console.warn("Chart.js not loaded — skipping chart render.");
+    return;
+  }
+  try{
+    const {labels, vix, score, exactIdxInWindow} = currentWindow();
+    const vixSplit = splitSolidDashed(vix, exactIdxInWindow);
+    const scoreSplit = splitSolidDashed(score, exactIdxInWindow);
 
-  document.getElementById("vixChartTitle").textContent = chartRange === 3 ? "VIX — Last 3 days" : "VIX — 30-day trend";
-  document.getElementById("scoreChartTitle").textContent = chartRange === 3 ? "Composite score — Last 3 days" : "Composite score — 30-day trend";
-  document.getElementById("range30Btn").classList.toggle("active", chartRange === 30);
-  document.getElementById("range3Btn").classList.toggle("active", chartRange === 3);
+    document.getElementById("vixChartTitle").textContent = chartRange === 3 ? "VIX — Last 3 days" : "VIX — 30-day trend";
+    document.getElementById("scoreChartTitle").textContent = chartRange === 3 ? "Composite score — Last 3 days" : "Composite score — 30-day trend";
+    document.getElementById("range30Btn").classList.toggle("active", chartRange === 30);
+    document.getElementById("range3Btn").classList.toggle("active", chartRange === 3);
 
-  if(vixChartInstance) vixChartInstance.destroy();
-  if(scoreChartInstance) scoreChartInstance.destroy();
+    if(vixChartInstance) vixChartInstance.destroy();
+    if(scoreChartInstance) scoreChartInstance.destroy();
 
   vixChartInstance = new Chart(document.getElementById("vixChart"), {
     type:"line",
@@ -300,6 +305,9 @@ function drawCharts(){
       }
     }
   });
+  }catch(err){
+    console.error("drawCharts failed:", err);
+  }
 }
 
 async function loadState(){
@@ -364,8 +372,9 @@ async function logCheck(v){
 
 async function init(){
   await loadState();
-  renderAll();
 
+  // Attach ALL button listeners FIRST, before touching charts —
+  // so a Chart.js/network failure can never prevent logging from working.
   document.getElementById("logBtn").addEventListener("click", async ()=>{
     const v = {
       vix: parseFloat(document.getElementById("inVix").value),
@@ -418,6 +427,21 @@ async function init(){
     chartRange = 3;
     drawCharts();
   });
+
+  // Render the table/score/charts LAST. Wrapped so that if Chart.js
+  // failed to load (CDN blocked, offline, ad-blocker, etc.) the table
+  // and score still show, and every button above still works.
+  try{
+    renderAll();
+  }catch(err){
+    console.error("renderAll failed:", err);
+    try{ renderTable(metrics); renderScore(metrics); }catch(e2){ /* even this failed */ }
+    const note = document.createElement("div");
+    note.className = "chart-note";
+    note.style.color = "var(--amber)";
+    note.textContent = "Charts couldn't load (likely a blocked script), but logging still works.";
+    document.querySelector(".wrap").insertBefore(note, document.querySelector(".wrap").children[2]);
+  }
 }
 
 init();
