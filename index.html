@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Crash Risk Dashboard</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#0e0f13">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CrashRisk">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#0e0f13; --panel:#16171d; --panel2:#1c1e26; --border:#2a2c36;
+    --text:#eef0f4; --sub:#9aa0ac; --green:#3ecf7e; --amber:#f5b942; --red:#f0554a;
+    --accent:#7c8cff;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:24px; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  }
+  .wrap{max-width:760px; margin:0 auto;}
+  h1{font-size:26px; margin:0 0 4px 0; font-weight:700;}
+  .subline{color:var(--sub); font-size:13px; margin-bottom:20px;}
+  .card{
+    background:var(--panel); border:1px solid var(--border); border-radius:12px;
+    padding:18px 20px; margin-bottom:18px;
+  }
+  table{width:100%; border-collapse:collapse; font-size:14px;}
+  th{
+    text-align:left; color:var(--sub); font-weight:600; font-size:12px;
+    text-transform:uppercase; letter-spacing:.03em; padding:8px 6px;
+    border-bottom:1px solid var(--border);
+  }
+  td{padding:10px 6px; border-bottom:1px solid var(--border); vertical-align:middle;}
+  tr:last-child td{border-bottom:none;}
+  .metric-name{font-weight:500;}
+  .metric-tag{color:var(--sub); font-size:11px; margin-left:4px;}
+  .dot{display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px;}
+  .dot.green{background:var(--green);}
+  .dot.amber{background:var(--amber);}
+  .dot.red{background:var(--red);}
+  .status{white-space:nowrap;}
+  .pts{text-align:right; color:var(--sub); font-variant-numeric:tabular-nums;}
+  .score-card{
+    display:flex; align-items:center; justify-content:space-between;
+    background:linear-gradient(180deg,rgba(62,207,126,.12),rgba(62,207,126,.03));
+    border:1px solid rgba(62,207,126,.35);
+  }
+  .score-num{font-size:30px; font-weight:800; color:var(--green);}
+  .score-cat{font-size:15px; font-weight:600; margin-top:2px;}
+  .score-legend{color:var(--sub); font-size:12px; text-align:right; line-height:1.5;}
+  .chart-title{font-size:15px; font-weight:600; margin-bottom:2px;}
+  .chart-note{color:var(--sub); font-size:12px; margin-bottom:10px;}
+  canvas{max-height:220px;}
+  .log-row{display:flex; gap:8px; flex-wrap:wrap; margin-top:14px;}
+  .log-row input{
+    background:var(--panel2); border:1px solid var(--border); color:var(--text);
+    border-radius:8px; padding:8px 10px; font-size:13px; width:110px;
+  }
+  .log-row label{display:flex; flex-direction:column; font-size:11px; color:var(--sub); gap:4px;}
+  button{
+    background:var(--accent); color:#fff; border:none; border-radius:8px;
+    padding:9px 16px; font-size:13px; font-weight:600; cursor:pointer; align-self:flex-end;
+  }
+  button:hover{opacity:.9;}
+  button.secondary{background:transparent; border:1px solid var(--border); color:var(--sub);}
+  button.secondary.active{background:var(--accent); color:#fff; border-color:var(--accent);}
+  .status-msg{font-size:12px; color:var(--sub); margin-top:8px; min-height:16px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Crash Risk Dashboard</h1>
+  <div class="subline" id="checkDateLine">Loading…</div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>Metric</th><th>Reading</th><th>Status</th><th style="text-align:right">Points</th></tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <div class="card score-card">
+    <div>
+      <div class="score-num" id="scoreNum">–</div>
+      <div class="score-cat" id="scoreCat">–</div>
+    </div>
+    <div class="score-legend">0–3 Normal<br>4–7 Correction risk<br>8–11 High risk<br>12+ Crash/systemic risk</div>
+  </div>
+
+  <div class="card">
+    <div class="chart-title" id="vixChartTitle">VIX — 30-day trend</div>
+    <div class="chart-note">Solid = exact reading from a "cd" check &nbsp;•&nbsp; Dashed = approximate reconstruction</div>
+    <div class="log-row" style="margin:0 0 10px 0;">
+      <button id="range30Btn" class="secondary" style="align-self:flex-start;">30 days</button>
+      <button id="range3Btn" class="secondary" style="align-self:flex-start;">Last 3 days</button>
+    </div>
+    <canvas id="vixChart"></canvas>
+  </div>
+
+  <div class="card">
+    <div class="chart-title" id="scoreChartTitle">Composite score — 30-day trend</div>
+    <div class="chart-note">Solid = exact reading from a "cd" check &nbsp;•&nbsp; Dashed = approximate reconstruction</div>
+    <canvas id="scoreChart"></canvas>
+  </div>
+
+  <div class="card" id="installCard" style="display:none;">
+    <div class="chart-title">Install this dashboard</div>
+    <div class="chart-note">Add it to your home screen so it opens like a regular app.</div>
+    <button id="installBtn">Install app</button>
+  </div>
+
+  <div class="card">
+    <div class="chart-title">Log a new "cd" check</div>
+    <div class="chart-note">Paste the line Claude gives you after a "cd" run, then hit Log — fills and saves all 8 fields in one click.</div>
+    <div class="log-row" style="align-items:flex-end;">
+      <label style="flex:1; min-width:260px;">Quick paste (VIX, VIX chg%, HY bp, BBB bp, 10Y%, 50DMA%, 200DMA%, WTI)
+        <input id="quickPaste" type="text" placeholder="15.32, 2.7, 263, 98, 4.76, 0.9, 6.9, 87.72" style="width:100%;">
+      </label>
+      <button id="quickLogBtn">Log</button>
+    </div>
+    <div class="chart-note" style="margin-top:12px;">Or fill in manually:</div>
+    <div class="log-row">
+      <label>VIX level<input id="inVix" type="number" step="0.01" placeholder="16.44"></label>
+      <label>VIX 1-day %<input id="inVixChg" type="number" step="0.1" placeholder="10.2"></label>
+      <label>HY OAS (bp)<input id="inHy" type="number" step="1" placeholder="263"></label>
+      <label>BBB OAS (bp)<input id="inBbb" type="number" step="1" placeholder="98"></label>
+      <label>10Y yield %<input id="in10y" type="number" step="0.01" placeholder="4.82"></label>
+      <label>S&P vs 50DMA %<input id="in50" type="number" step="0.1" placeholder="0.7"></label>
+      <label>S&P vs 200DMA %<input id="in200" type="number" step="0.1" placeholder="6.6"></label>
+      <label>WTI ($)<input id="inWti" type="number" step="0.01" placeholder="90.86"></label>
+      <button id="logBtn">Save check</button>
+    </div>
+    <div class="status-msg" id="statusMsg"></div>
+  </div>
+</div>
+
+<script>
+const DATES = ["8/4","8/5","8/6","8/7","8/8","8/11","8/12","8/13","8/14","8/15","8/18","8/19","8/20","8/21","8/22","8/25","8/26","8/27","8/28","8/29","9/1","9/2"];
+
+const DEFAULT_VIX = [17.8,18.1,18.4,17.6,17.0,16.5,16.8,16.2,15.8,15.5,15.9,15.6,15.2,14.9,14.7,14.5,14.6,14.4,14.13,14.3,14.92,16.44];
+const DEFAULT_SCORE = [1,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,3];
+const DEFAULT_EXACT_IDX = 20; // index 20 (9/1) and 21 (9/2) are exact by default
+
+const DEFAULT_METRICS = [
+  {name:"VIX level", tag:"", reading:"16.44", status:"green", pts:0, max:2},
+  {name:"VIX 1-day % chg", tag:"", reading:"+10.2%", status:"amber", pts:1, max:2},
+  {name:"HY OAS (bp)", tag:"(×2)", reading:"263 bp", status:"green", pts:0, max:4},
+  {name:"BBB OAS (bp)", tag:"(×2)", reading:"98 bp", status:"green", pts:0, max:4},
+  {name:"10Y yield", tag:"", reading:"4.82%", status:"amber", pts:1, max:2},
+  {name:"S&P vs 50DMA", tag:"", reading:"+0.7%", status:"green", pts:0, max:2},
+  {name:"S&P vs 200DMA", tag:"", reading:"+6.6%", status:"green", pts:0, max:2},
+  {name:"WTI crude", tag:"", reading:"$90.86", status:"amber", pts:1, max:2},
+];
+
+let vixSeries, scoreSeries, exactIdx, metrics, checkDate;
+
+function statusFor(value, greenMax, amberMax){
+  if(value < greenMax) return "green";
+  if(value < amberMax) return "amber";
+  return "red";
+}
+
+function computeFromInputs(v){
+  const m = [];
+  const vixLvl = v.vix, vixChg = Math.abs(v.vixChg), hy = v.hy, bbb = v.bbb, y10 = v.y10, d50 = v.d50, d200 = v.d200, wti = v.wti;
+
+  const vixLvlSt = statusFor(vixLvl, 18, 25);
+  const vixChgSt = statusFor(vixChg, 10, 20);
+  const hySt = statusFor(hy, 400, 500);
+  const bbbSt = statusFor(bbb, 150, 200);
+  const y10St = statusFor(y10, 4.5, 5.0);
+  const d50St = d50 > 0 ? "green" : (d50 >= -5 ? "amber" : "red");
+  const d200St = d200 > 0 ? "green" : (d200 >= -5 ? "amber" : "red");
+  const wtiSt = statusFor(wti, 90, 110);
+
+  const ptsOf = s => s === "green" ? 0 : s === "amber" ? 1 : 2;
+
+  m.push({name:"VIX level", tag:"", reading:vixLvl.toFixed(2), status:vixLvlSt, pts:ptsOf(vixLvlSt), max:2});
+  m.push({name:"VIX 1-day % chg", tag:"", reading:(v.vixChg>=0?"+":"")+v.vixChg.toFixed(1)+"%", status:vixChgSt, pts:ptsOf(vixChgSt), max:2});
+  m.push({name:"HY OAS (bp)", tag:"(×2)", reading:hy+" bp", status:hySt, pts:ptsOf(hySt)*2, max:4});
+  m.push({name:"BBB OAS (bp)", tag:"(×2)", reading:bbb+" bp", status:bbbSt, pts:ptsOf(bbbSt)*2, max:4});
+  m.push({name:"10Y yield", tag:"", reading:y10.toFixed(2)+"%", status:y10St, pts:ptsOf(y10St), max:2});
+  m.push({name:"S&P vs 50DMA", tag:"", reading:(d50>=0?"+":"")+d50.toFixed(1)+"%", status:d50St, pts:ptsOf(d50St), max:2});
+  m.push({name:"S&P vs 200DMA", tag:"", reading:(d200>=0?"+":"")+d200.toFixed(1)+"%", status:d200St, pts:ptsOf(d200St), max:2});
+  m.push({name:"WTI crude", tag:"", reading:"$"+wti.toFixed(2), status:wtiSt, pts:ptsOf(wtiSt), max:2});
+
+  return m;
+}
+
+function totalScore(m){ return m.reduce((a,x)=>a+x.pts,0); }
+
+function categoryFor(score){
+  if(score<=3) return "Normal";
+  if(score<=7) return "Correction risk";
+  if(score<=11) return "High risk";
+  return "Crash/systemic risk";
+}
+
+function renderTable(m){
+  const body = document.getElementById("tableBody");
+  body.innerHTML = "";
+  m.forEach(row=>{
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="metric-name">${row.name}<span class="metric-tag">${row.tag}</span></td>
+      <td>${row.reading}</td>
+      <td class="status"><span class="dot ${row.status}"></span>${row.status.charAt(0).toUpperCase()+row.status.slice(1)}</td>
+      <td class="pts">${row.pts} / ${row.max}</td>
+    `;
+    body.appendChild(tr);
+  });
+}
+
+function renderScore(m){
+  const score = totalScore(m);
+  const cat = categoryFor(score);
+  document.getElementById("scoreNum").textContent = score + " / 20";
+  document.getElementById("scoreCat").textContent = cat;
+  const el = document.getElementById("scoreNum");
+  el.style.color = score<=3 ? "var(--green)" : score<=7 ? "var(--amber)" : "var(--red)";
+}
+
+let chartRange = 30; // 30 or 3
+let vixChartInstance = null, scoreChartInstance = null;
+
+function splitSolidDashed(values, exactStartIdx){
+  // returns two datasets: dashed (approx, up to exactStartIdx inclusive to bridge the line) and solid (exact)
+  const dashed = values.map((v,i)=> i <= exactStartIdx ? v : null);
+  const solid = values.map((v,i)=> i >= exactStartIdx ? v : null);
+  return {dashed, solid};
+}
+
+function currentWindow(){
+  if(chartRange === 3){
+    const labels = DATES.slice(-3);
+    const vix = vixSeries.slice(-3);
+    const score = scoreSeries.slice(-3);
+    // exact index relative to this 3-point window
+    const fullLen = DATES.length;
+    const windowStart = fullLen - 3;
+    const exactIdxInWindow = Math.max(0, exactIdx - windowStart);
+    return {labels, vix, score, exactIdxInWindow};
+  }
+  return {labels: DATES, vix: vixSeries, score: scoreSeries, exactIdxInWindow: exactIdx};
+}
+
+function drawCharts(){
+  const {labels, vix, score, exactIdxInWindow} = currentWindow();
+  const vixSplit = splitSolidDashed(vix, exactIdxInWindow);
+  const scoreSplit = splitSolidDashed(score, exactIdxInWindow);
+
+  document.getElementById("vixChartTitle").textContent = chartRange === 3 ? "VIX — Last 3 days" : "VIX — 30-day trend";
+  document.getElementById("scoreChartTitle").textContent = chartRange === 3 ? "Composite score — Last 3 days" : "Composite score — 30-day trend";
+  document.getElementById("range30Btn").classList.toggle("active", chartRange === 30);
+  document.getElementById("range3Btn").classList.toggle("active", chartRange === 3);
+
+  if(vixChartInstance) vixChartInstance.destroy();
+  if(scoreChartInstance) scoreChartInstance.destroy();
+
+  vixChartInstance = new Chart(document.getElementById("vixChart"), {
+    type:"line",
+    data:{
+      labels:labels,
+      datasets:[
+        {label:"Approx", data:vixSplit.dashed, borderColor:"#7c8cff", borderDash:[6,4], pointRadius:0, tension:.25, spanGaps:false},
+        {label:"Exact", data:vixSplit.solid, borderColor:"#3ecf7e", pointRadius:(ctx)=>ctx.dataIndex>=exactIdxInWindow?3:0, tension:.25, spanGaps:false},
+      ]
+    },
+    options:{
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{ticks:{color:"#9aa0ac", maxRotation:0, autoSkip:true}, grid:{color:"#2a2c36"}},
+        y:{ticks:{color:"#9aa0ac"}, grid:{color:"#2a2c36"}}
+      }
+    }
+  });
+
+  scoreChartInstance = new Chart(document.getElementById("scoreChart"), {
+    type:"line",
+    data:{
+      labels:labels,
+      datasets:[
+        {label:"Approx", data:scoreSplit.dashed, borderColor:"#7c8cff", borderDash:[6,4], pointRadius:0, tension:.25, spanGaps:false},
+        {label:"Exact", data:scoreSplit.solid, borderColor:"#3ecf7e", pointRadius:(ctx)=>ctx.dataIndex>=exactIdxInWindow?3:0, tension:.25, spanGaps:false},
+      ]
+    },
+    options:{
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{ticks:{color:"#9aa0ac", maxRotation:0, autoSkip:true}, grid:{color:"#2a2c36"}},
+        y:{min:0, max:8, ticks:{color:"#9aa0ac", stepSize:1}, grid:{color:"#2a2c36"}}
+      }
+    }
+  });
+}
+
+async function loadState(){
+  let saved = null;
+  try{
+    if(window.storage){
+      const r = await window.storage.get("dashboard-state");
+      if(r && r.value) saved = JSON.parse(r.value);
+    }
+  }catch(e){ /* no saved state yet */ }
+
+  if(saved){
+    vixSeries = saved.vixSeries;
+    scoreSeries = saved.scoreSeries;
+    exactIdx = saved.exactIdx;
+    metrics = saved.metrics;
+    checkDate = saved.checkDate;
+  } else {
+    vixSeries = DEFAULT_VIX.slice();
+    scoreSeries = DEFAULT_SCORE.slice();
+    exactIdx = DEFAULT_EXACT_IDX;
+    metrics = DEFAULT_METRICS;
+    checkDate = "2026-09-02";
+  }
+}
+
+async function saveState(){
+  const state = {vixSeries, scoreSeries, exactIdx, metrics, checkDate};
+  try{
+    if(window.storage) await window.storage.set("dashboard-state", JSON.stringify(state));
+  }catch(e){ /* storage unavailable */ }
+}
+
+function renderAll(){
+  document.getElementById("checkDateLine").textContent = "Last check: " + checkDate;
+  renderTable(metrics);
+  renderScore(metrics);
+  drawCharts();
+}
+
+async function logCheck(v){
+  const msg = document.getElementById("statusMsg");
+  if(Object.values(v).some(x => typeof x !== "number" || isNaN(x))){
+    msg.textContent = "Couldn't read all 8 values — check the format and try again.";
+    msg.style.color = "var(--amber)";
+    return;
+  }
+  metrics = computeFromInputs(v);
+
+  // append new day to the trend series, dropping the oldest
+  vixSeries = vixSeries.slice(1).concat([v.vix]);
+  scoreSeries = scoreSeries.slice(1).concat([totalScore(metrics)]);
+  exactIdx = Math.max(0, exactIdx - 1); // shift window; new point is exact
+  const today = new Date();
+  checkDate = today.toISOString().slice(0,10);
+
+  await saveState();
+  renderAll();
+  msg.textContent = "Saved — this check is now the exact point for today.";
+  msg.style.color = "var(--green)";
+}
+
+async function init(){
+  await loadState();
+  renderAll();
+
+  document.getElementById("logBtn").addEventListener("click", async ()=>{
+    const v = {
+      vix: parseFloat(document.getElementById("inVix").value),
+      vixChg: parseFloat(document.getElementById("inVixChg").value),
+      hy: parseFloat(document.getElementById("inHy").value),
+      bbb: parseFloat(document.getElementById("inBbb").value),
+      y10: parseFloat(document.getElementById("in10y").value),
+      d50: parseFloat(document.getElementById("in50").value),
+      d200: parseFloat(document.getElementById("in200").value),
+      wti: parseFloat(document.getElementById("inWti").value),
+    };
+    await logCheck(v);
+  });
+
+  document.getElementById("quickLogBtn").addEventListener("click", async ()=>{
+    const rawEl = document.getElementById("quickPaste");
+    const raw = (rawEl ? rawEl.value : "").trim();
+    // Pull out every number (handles "-", decimals, "+"), whether the paste has
+    // labels ("VIX 15.32, VIX chg 2.7, ...") or is just bare numbers.
+    const matches = raw.match(/-?\d+(\.\d+)?/g) || [];
+    const parts = matches.map(Number);
+    const msg = document.getElementById("statusMsg");
+    if(parts.length < 8){
+      const preview = raw.length ? `"${raw.slice(0,60)}${raw.length>60?"…":""}"` : "(empty — nothing was read from the box)";
+      msg.textContent = `Found ${parts.length} number(s) in ${preview}. Need 8: VIX, VIX chg%, HY bp, BBB bp, 10Y%, 50DMA%, 200DMA%, WTI.`;
+      msg.style.color = "var(--amber)";
+      return;
+    }
+    if(parts.length > 8) parts.length = 8;
+    const [vix, vixChg, hy, bbb, y10, d50, d200, wti] = parts;
+    // mirror values into the manual fields too, so they stay in sync if the user glances at them
+    document.getElementById("inVix").value = vix;
+    document.getElementById("inVixChg").value = vixChg;
+    document.getElementById("inHy").value = hy;
+    document.getElementById("inBbb").value = bbb;
+    document.getElementById("in10y").value = y10;
+    document.getElementById("in50").value = d50;
+    document.getElementById("in200").value = d200;
+    document.getElementById("inWti").value = wti;
+
+    await logCheck({vix, vixChg, hy, bbb, y10, d50, d200, wti});
+    document.getElementById("quickPaste").value = "";
+  });
+
+  document.getElementById("range30Btn").addEventListener("click", ()=>{
+    chartRange = 30;
+    drawCharts();
+  });
+  document.getElementById("range3Btn").addEventListener("click", ()=>{
+    chartRange = 3;
+    drawCharts();
+  });
+}
+
+init();
+
+// --- PWA install + service worker ---
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(()=>{ /* ignore if not served over http(s) */ });
+  });
+}
+
+let deferredInstallPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  const card = document.getElementById("installCard");
+  if (card) card.style.display = "block";
+});
+
+document.getElementById("installBtn")?.addEventListener("click", async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  document.getElementById("installCard").style.display = "none";
+});
+
+window.addEventListener("appinstalled", () => {
+  const card = document.getElementById("installCard");
+  if (card) card.style.display = "none";
+});
+</script>
+</body>
+</html>
