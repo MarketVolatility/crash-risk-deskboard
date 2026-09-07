@@ -122,10 +122,10 @@
     <div class="chart-note">Pulls VIX, S&P 500 (+ 50/200DMA), WTI oil, 10Y yield, and HY/BBB spreads automatically. Needs two free API keys, saved once in your browser.</div>
     <div class="log-row">
       <label style="flex:1; min-width:220px;">Twelve Data API key <a href="https://twelvedata.com/pricing" target="_blank" style="color:var(--accent);">(get free key)</a>
-        <input id="apiKeyTD" type="text" placeholder="Paste API here">
+        <input id="apiKeyTD" type="text" placeholder="paste key here">
       </label>
       <label style="flex:1; min-width:220px;">FRED API key <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank" style="color:var(--accent);">(get free key)</a>
-        <input id="apiKeyFRED" type="text" placeholder="Paste API here">
+        <input id="apiKeyFRED" type="text" placeholder="paste key here">
       </label>
       <button id="saveKeysBtn" class="secondary">Save keys</button>
     </div>
@@ -160,7 +160,7 @@
     <div class="status-msg" id="statusMsg"></div>
   </div>
 
-  <div style="text-align:center; color:var(--sub); font-size:11px; margin-top:8px;">Dashboard build v2.0</div>
+  <div style="text-align:center; color:var(--sub); font-size:11px; margin-top:8px;">Dashboard build v3.0 (real persistence + fetch diagnostics)</div>
 </div>
 
 <script>
@@ -334,11 +334,9 @@ function drawCharts(){
 async function loadState(){
   let saved = null;
   try{
-    if(window.storage){
-      const r = await window.storage.get("dashboard-state");
-      if(r && r.value) saved = JSON.parse(r.value);
-    }
-  }catch(e){ /* no saved state yet */ }
+    const raw = localStorage.getItem("dashboard-state");
+    if(raw) saved = JSON.parse(raw);
+  }catch(e){ /* no saved state yet, or localStorage unavailable */ }
 
   if(saved){
     vixSeries = saved.vixSeries;
@@ -358,8 +356,8 @@ async function loadState(){
 async function saveState(){
   const state = {vixSeries, scoreSeries, exactIdx, metrics, checkDate};
   try{
-    if(window.storage) await window.storage.set("dashboard-state", JSON.stringify(state));
-  }catch(e){ /* storage unavailable */ }
+    localStorage.setItem("dashboard-state", JSON.stringify(state));
+  }catch(e){ console.error("Failed to save dashboard state:", e); }
 }
 
 function renderAll(){
@@ -373,18 +371,16 @@ function renderAll(){
 async function getApiKeys(){
   let td = "", fred = "";
   try{
-    if(window.storage){
-      const r = await window.storage.get("api-keys");
-      if(r && r.value){ const k = JSON.parse(r.value); td = k.td || ""; fred = k.fred || ""; }
-    }
-  }catch(e){ /* no keys saved yet */ }
+    const raw = localStorage.getItem("api-keys");
+    if(raw){ const k = JSON.parse(raw); td = k.td || ""; fred = k.fred || ""; }
+  }catch(e){ /* no keys saved yet, or localStorage unavailable */ }
   return {td, fred};
 }
 
 async function saveApiKeys(td, fred){
   try{
-    if(window.storage) await window.storage.set("api-keys", JSON.stringify({td, fred}));
-  }catch(e){ /* storage unavailable */ }
+    localStorage.setItem("api-keys", JSON.stringify({td, fred}));
+  }catch(e){ console.error("Failed to save API keys:", e); }
 }
 
 async function fetchTwelveDataQuote(symbol, apiKey){
@@ -431,44 +427,72 @@ async function fetchLiveData(){
   }
   msg.textContent = "Fetching…";
   msg.style.color = "var(--sub)";
-  try{
-    const [vixQ, spxQ, wtiQ, sma50, sma200, dgs10, hyOas, bbbOas] = await Promise.all([
-      fetchTwelveDataQuote("VIX", td),
-      fetchTwelveDataQuote("SPX", td),
-      fetchTwelveDataQuote("WTI/USD", td),
-      fetchTwelveDataSMA("SPX", 50, td),
-      fetchTwelveDataSMA("SPX", 200, td),
-      fetchFredLatest("DGS10", fred),
-      fetchFredLatest("BAMLH0A0HYM2", fred),
-      fetchFredLatest("BAMLC0A4CBBB", fred),
-    ]);
 
-    const vix = parseFloat(vixQ.close);
-    const vixChg = parseFloat(vixQ.percent_change);
-    const spx = parseFloat(spxQ.close);
-    const wti = parseFloat(wtiQ.close);
-    const d50 = ((spx - sma50) / sma50) * 100;
-    const d200 = ((spx - sma200) / sma200) * 100;
-    const y10 = dgs10.value;
-    const hy = hyOas.value * 100; // FRED reports as percent, convert to bp
-    const bbb = bbbOas.value * 100;
+  const sources = [
+    { key: "vixQ",   label: "VIX (Twelve Data)",       fn: () => fetchTwelveDataQuote("VIX", td) },
+    { key: "spxQ",   label: "S&P 500 (Twelve Data)",    fn: () => fetchTwelveDataQuote("SPX", td) },
+    { key: "wtiQ",   label: "WTI oil (Twelve Data)",    fn: () => fetchTwelveDataQuote("WTI/USD", td) },
+    { key: "sma50",  label: "S&P 50DMA (Twelve Data)",  fn: () => fetchTwelveDataSMA("SPX", 50, td) },
+    { key: "sma200", label: "S&P 200DMA (Twelve Data)", fn: () => fetchTwelveDataSMA("SPX", 200, td) },
+    { key: "dgs10",  label: "10Y yield (FRED)",         fn: () => fetchFredLatest("DGS10", fred) },
+    { key: "hyOas",  label: "HY OAS (FRED)",            fn: () => fetchFredLatest("BAMLH0A0HYM2", fred) },
+    { key: "bbbOas", label: "BBB OAS (FRED)",           fn: () => fetchFredLatest("BAMLC0A4CBBB", fred) },
+  ];
 
-    document.getElementById("inVix").value = vix.toFixed(2);
-    document.getElementById("inVixChg").value = vixChg.toFixed(2);
-    document.getElementById("inHy").value = hy.toFixed(0);
-    document.getElementById("inBbb").value = bbb.toFixed(0);
-    document.getElementById("in10y").value = y10.toFixed(2);
-    document.getElementById("in50").value = d50.toFixed(2);
-    document.getElementById("in200").value = d200.toFixed(2);
-    document.getElementById("inWti").value = wti.toFixed(2);
+  const results = await Promise.allSettled(sources.map(s => s.fn()));
+  const out = {};
+  const failures = [];
+  results.forEach((r, i) => {
+    const src = sources[i];
+    if(r.status === "fulfilled"){
+      out[src.key] = r.value;
+    } else {
+      const isCorsLike = /Failed to fetch|NetworkError|TypeError/i.test(String(r.reason && r.reason.message));
+      failures.push(`${src.label}: ${r.reason && r.reason.message}${isCorsLike ? " (possibly blocked by CORS — this API may not allow direct browser requests)" : ""}`);
+      console.error(`${src.label} failed:`, r.reason);
+    }
+  });
 
-    await logCheck({vix, vixChg, hy, bbb, y10, d50, d200, wti});
-    msg.textContent = `Live data fetched and logged (HY/BBB OAS dated ${hyOas.date} — FRED's most recent print).`;
+  // Fill in whatever succeeded; leave the rest untouched so manual entry still works for gaps.
+  if(out.vixQ){
+    document.getElementById("inVix").value = parseFloat(out.vixQ.close).toFixed(2);
+    document.getElementById("inVixChg").value = parseFloat(out.vixQ.percent_change).toFixed(2);
+  }
+  if(out.wtiQ){
+    document.getElementById("inWti").value = parseFloat(out.wtiQ.close).toFixed(2);
+  }
+  if(out.spxQ && out.sma50){
+    const spx = parseFloat(out.spxQ.close);
+    document.getElementById("in50").value = (((spx - out.sma50) / out.sma50) * 100).toFixed(2);
+  }
+  if(out.spxQ && out.sma200){
+    const spx = parseFloat(out.spxQ.close);
+    document.getElementById("in200").value = (((spx - out.sma200) / out.sma200) * 100).toFixed(2);
+  }
+  if(out.dgs10) document.getElementById("in10y").value = out.dgs10.value.toFixed(2);
+  if(out.hyOas) document.getElementById("inHy").value = (out.hyOas.value * 100).toFixed(0);
+  if(out.bbbOas) document.getElementById("inBbb").value = (out.bbbOas.value * 100).toFixed(0);
+
+  if(failures.length === 0){
+    // Everything succeeded — read the now-filled fields and log automatically.
+    const v = {
+      vix: parseFloat(document.getElementById("inVix").value),
+      vixChg: parseFloat(document.getElementById("inVixChg").value),
+      hy: parseFloat(document.getElementById("inHy").value),
+      bbb: parseFloat(document.getElementById("inBbb").value),
+      y10: parseFloat(document.getElementById("in10y").value),
+      d50: parseFloat(document.getElementById("in50").value),
+      d200: parseFloat(document.getElementById("in200").value),
+      wti: parseFloat(document.getElementById("inWti").value),
+    };
+    await logCheck(v);
+    msg.textContent = `All 8 fields fetched and logged successfully (HY/BBB OAS dated ${out.hyOas.date} — FRED's most recent print).`;
     msg.style.color = "var(--green)";
-  }catch(err){
-    console.error(err);
-    msg.textContent = "Fetch failed: " + err.message;
-    msg.style.color = "var(--red)";
+  } else {
+    msg.innerHTML = `${8 - failures.length}/8 fields fetched — filled those in below, but didn't auto-log since some are missing:<br>` +
+      failures.map(f => `• ${f}`).join("<br>") +
+      `<br>Fill in the rest manually and click "Save check" below.`;
+    msg.style.color = "var(--amber)";
   }
 }
 
