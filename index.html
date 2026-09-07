@@ -147,20 +147,20 @@
     </div>
     <div class="chart-note" style="margin-top:12px;">Or fill in manually:</div>
     <div class="log-row">
-      <label>VIX level<input id="inVix" type="number" step="0.01" placeholder="16.44"></label>
-      <label>VIX 1-day %<input id="inVixChg" type="number" step="0.1" placeholder="10.2"></label>
-      <label>HY OAS (bp)<input id="inHy" type="number" step="1" placeholder="263"></label>
-      <label>BBB OAS (bp)<input id="inBbb" type="number" step="1" placeholder="98"></label>
-      <label>10Y yield %<input id="in10y" type="number" step="0.01" placeholder="4.82"></label>
-      <label>S&P vs 50DMA %<input id="in50" type="number" step="0.1" placeholder="0.7"></label>
-      <label>S&P vs 200DMA %<input id="in200" type="number" step="0.1" placeholder="6.6"></label>
-      <label>WTI ($)<input id="inWti" type="number" step="0.01" placeholder="90.86"></label>
+      <label>VIX level<input id="inVix" type="number" step="0.01" placeholder="e.g. 16"></label>
+      <label>VIX 1-day %<input id="inVixChg" type="number" step="0.1" placeholder="e.g. 10"></label>
+      <label>HY OAS (bp)<input id="inHy" type="number" step="1" placeholder="e.g. 260"></label>
+      <label>BBB OAS (bp)<input id="inBbb" type="number" step="1" placeholder="e.g. 100"></label>
+      <label>10Y yield %<input id="in10y" type="number" step="0.01" placeholder="e.g. 4.8"></label>
+      <label>S&P vs 50DMA %<input id="in50" type="number" step="0.1" placeholder="e.g. 1.0"></label>
+      <label>S&P vs 200DMA %<input id="in200" type="number" step="0.1" placeholder="e.g. 7.0"></label>
+      <label>WTI ($)<input id="inWti" type="number" step="0.01" placeholder="e.g. 90"></label>
       <button id="logBtn">Save check</button>
     </div>
     <div class="status-msg" id="statusMsg"></div>
   </div>
 
-  <div style="text-align:center; color:var(--sub); font-size:11px; margin-top:8px;">Dashboard build v3.1 (honest fetch scope: SPY/USO proxies, FRED/VIX dropped)</div>
+  <div style="text-align:center; color:var(--sub); font-size:11px; margin-top:8px;">Dashboard build v3.2 (removed misleading placeholders, named-field errors)</div>
 </div>
 
 <script>
@@ -475,8 +475,11 @@ async function fetchLiveData(){
 
 async function logCheck(v){
   const msg = document.getElementById("statusMsg");
-  if(Object.values(v).some(x => typeof x !== "number" || isNaN(x))){
-    msg.textContent = "Couldn't read all 8 values — check the format and try again.";
+  const fieldLabels = {vix:"VIX level", vixChg:"VIX 1-day %", hy:"HY OAS", bbb:"BBB OAS", y10:"10Y yield", d50:"S&P vs 50DMA", d200:"S&P vs 200DMA", wti:"WTI"};
+  const badFields = Object.keys(v).filter(k => typeof v[k] !== "number" || isNaN(v[k]));
+  if(badFields.length > 0){
+    const names = badFields.map(k => fieldLabels[k] || k).join(", ");
+    msg.textContent = `These field(s) are empty or invalid: ${names}. (Gray text in a box is just a hint, not an entered value — click in and type a number.)`;
     msg.style.color = "var(--amber)";
     return;
   }
